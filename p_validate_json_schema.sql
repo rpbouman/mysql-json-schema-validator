@@ -8,27 +8,33 @@ CREATE PROCEDURE p_validate_json_schema(
 , p_rules JSON
 )
 BEGIN
-  DECLARE cond_rule_error CONDITION FOR SQLSTATE '42000';
+  -- signal this if the validation rules are wrong
+  DECLARE cond_rule_error       CONDITION FOR SQLSTATE '42000';
+  -- signal this if the document fails to validate against the validation rules
   DECLARE cond_validation_error CONDITION FOR SQLSTATE '42000';
 
   -- property constants
-  DECLARE v_prop_path     CHAR(6)  DEFAULT '$.path';
-  DECLARE v_prop_rules    CHAR(7)  DEFAULT '$.rules';
-  DECLARE v_prop_optional CHAR(10) DEFAULT '$.optional';
-  DECLARE v_prop_default  CHAR(9)  DEFAULT '$.default';
-  DECLARE v_prop_type     CHAR(6)  DEFAULT '$.type';
-  DECLARE v_prop_nullable CHAR(10) DEFAULT '$.nullable';
+  DECLARE v_prop_path       CHAR(6)  DEFAULT '$.path';
+  DECLARE v_prop_rules      CHAR(7)  DEFAULT '$.rules';
+  DECLARE v_prop_optional   CHAR(10) DEFAULT '$.optional';
+  DECLARE v_prop_default    CHAR(9)  DEFAULT '$.default';
+  DECLARE v_prop_type       CHAR(6)  DEFAULT '$.type';
+  DECLARE v_prop_nullable   CHAR(10) DEFAULT '$.nullable';
+  DECLARE v_prop_minvalue   CHAR(10) DEFAULT '$.minvalue';
+  DECLARE v_prop_maxvalue   CHAR(10) DEFAULT '$.maxvalue';
+  DECLARE v_prop_minlength  CHAR(11) DEFAULT '$.minlength';
+  DECLARE v_prop_maxlength  CHAR(11) DEFAULT '$.maxlength';
 
   -- type constants
-  DECLARE v_type_array    CHAR(5)  DEFAULT 'ARRAY';
-  DECLARE v_type_boolean  CHAR(7)  DEFAULT 'BOOLEAN';
-  DECLARE v_type_null     CHAR(4)  DEFAULT 'NULL';
-  DECLARE v_type_object   CHAR(6)  DEFAULT 'OBJECT';
-  DECLARE v_type_string   CHAR(6)  DEFAULT 'STRING';
+  DECLARE v_type_array      CHAR(5)  DEFAULT 'ARRAY';
+  DECLARE v_type_boolean    CHAR(7)  DEFAULT 'BOOLEAN';
+  DECLARE v_type_null       CHAR(4)  DEFAULT 'NULL';
+  DECLARE v_type_object     CHAR(6)  DEFAULT 'OBJECT';
+  DECLARE v_type_string     CHAR(6)  DEFAULT 'STRING';
 
   DECLARE i, j, n INT UNSIGNED DEFAULT 0;
   DECLARE v_optional, v_nullable BOOL;
-  DECLARE v_rule, v_rules, v_subrule, v_path, v_subpath, v_item, v_opt, v_typetype, v_typetype_item, v_value_nullable JSON;
+  DECLARE v_rule, v_rules, v_subrule, v_path, v_subpath, v_item, v_opt, v_typetype, v_typetype_item, v_value_nullable, v_minvalue, v_maxvalue, v_minlength, v_maxlength JSON;
   DECLARE v_message_text, v_prop, v_type, v_expected_type, v_item_type, v_path_string TEXT;
 
   SET v_type = JSON_TYPE(p_rules)
@@ -134,13 +140,15 @@ BEGIN
     END IF;
 
     -- check nullability
-    IF v_nullable = FALSE AND v_item_type = v_type_null THEN
-      SET v_message_text = CONCAT('Non-nullable item at path ', v_path_string, ' is null.');
-      SIGNAL cond_validation_error
-        SET MESSAGE_TEXT = v_message_text;
-    ELSE
-      -- we can't check anything about a NULL value. So move on to the next rule
-      ITERATE _rules;
+    IF v_item_type = v_type_null THEN
+      IF v_nullable = TRUE THEN
+        -- we can't check anything about a NULL value. So move on to the next rule
+        ITERATE _rules;
+      ELSE
+        SET v_message_text = CONCAT('Non-nullable item at path ', v_path_string, ' is null.');
+        SIGNAL cond_validation_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
     END IF;
 
     -- check if the item is of the right type
@@ -228,10 +236,129 @@ BEGIN
       END CASE;
     END IF; -- end of type validation
 
-    -- TODO: check minvalue
-    -- TODO: check maxvalue
-    -- TODO: check minlength
-    -- TODO: check maxlength
+    -- check minvalue
+    SET v_prop = v_prop_minvalue;
+    IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop) THEN
+      SET v_minvalue= JSON_EXTRACT(v_rule, v_prop)
+      ,   v_type = JSON_TYPE(v_minvalue)
+      ;
+
+      IF v_type != v_item_type THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be of type ', v_item_type, '. Found: ', v_type, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      IF v_minvalue > v_item THEN
+        SET v_message_text = CONCAT('Item at path ', v_path_string, ' is smaller than ', v_prop, '.');
+        SIGNAL cond_validation_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+    END IF;
+
+    -- check maxvalue
+    SET v_prop = v_prop_maxvalue;
+    IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop) THEN
+      SET v_maxvalue= JSON_EXTRACT(v_rule, v_prop)
+      ,   v_type = JSON_TYPE(v_maxvalue)
+      ;
+
+      IF v_type != v_item_type THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be of type ', v_item_type, '. Found: ', v_type, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      IF v_maxvalue < v_item THEN
+        SET v_message_text = CONCAT('Item at path ', v_path_string, ' is larger than ', v_prop, '.');
+        SIGNAL cond_validation_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+    END IF;
+
+    -- check minlength
+    SET v_prop = v_prop_minlength;
+    IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop) THEN
+
+      SET v_minlength = JSON_EXTRACT(v_rule, v_prop)
+      ,   v_type = JSON_TYPE(v_minlength)
+      ,   v_expected_type = v_type_integer
+      ;
+      IF v_type != v_expected_type THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be of the ', v_expected_type, ' type. Found: ', v_type, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      IF v_minlength < 0 THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be a positive integer. Found: ', v_minlength, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      CASE v_item_type
+        WHEN v_type_string THEN
+          SET n = CHARACTER_LENGTH(JSON_UNQUOTE(v_item));
+        WHEN v_type_array THEN
+          SET n = JSON_LENGTH(v_item);
+        ELSE
+          SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' can only be applied to items of type ', v_type_string, ' or ', v_type_array, '. Found: ', v_item_type, '.');
+          SIGNAL cond_rule_error
+            SET MESSAGE_TEXT = v_message_text;
+      END CASE;
+
+      IF n < v_minlength THEN
+        SET v_message_text = CONCAT('Length of item at path ', v_path_string, ' is ', n, ' which is less than the specied ', v_prop, ' of ', v_minlength, '.');
+        SIGNAL cond_validation_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+    END IF;
+
+    -- check maxlength
+    SET v_prop = v_prop_maxlength;
+    IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop) THEN
+
+      SET v_maxlength = JSON_EXTRACT(v_rule, v_prop)
+      ,   v_type = JSON_TYPE(v_maxlength)
+      ,   v_expected_type = v_type_integer
+      ;
+      IF v_type != v_expected_type THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be of the ', v_expected_type, ' type. Found: ', v_type, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      IF v_maxlength < 0 THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be a positive integer. Found: ', v_maxlength, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      IF v_maxlength < v_minlength THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' is ', v_maxlength, ' which is less than the value specified for ', v_prop_minlength, ' which is ', v_minlength, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      CASE v_item_type
+        WHEN v_type_string THEN
+          SET n = CHARACTER_LENGTH(JSON_UNQUOTE(v_item));
+        WHEN v_type_array THEN
+          SET n = JSON_LENGTH(v_item);
+        ELSE
+          SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' can only be applied to items of type ', v_type_string, ' or ', v_type_array, '. Found: ', v_item_type, '.');
+          SIGNAL cond_rule_error
+            SET MESSAGE_TEXT = v_message_text;
+      END CASE;
+
+      IF n > v_minlength THEN
+        SET v_message_text = CONCAT('Length of item at path ', v_path_string, ' is ', n, ' which is more than the specied ', v_prop, ' of ', v_maxlength, '.');
+        SIGNAL cond_validation_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+    END IF;
     -- TODO: check list of values
     -- TODO: check pattern of value
 
@@ -279,114 +406,3 @@ END;
 
 delimiter ;
 
--- test 1: ERROR 1644 (42000): Rules parameter must be an ARRAY type. Found: OBJECT.
-call p_validate_json_schema('[]', '{}');
-
--- test 2: Success
-call p_validate_json_schema('[]', '[]');
-
--- test 3: ERROR 1644 (42000): Rule 1 must be of the OBJECT type. Found: INTEGER.
-call p_validate_json_schema('[]', '[1]');
-
--- test 4: ERROR 1644 (42000): Rule 1 must specify a $.path property.
-call p_validate_json_schema('[]', '[{}]');
-
--- test 5: ERROR 1644 (42000): Property$.path of rule 1 at path 1 must be of the STRING type. Found: INTEGER.
-call p_validate_json_schema('[]', '[{
-  "path": 1
-}]');
-
--- test 6: ERROR 1644 (42000): Non-optional item at path .bla not found.
-call p_validate_json_schema('[]', '[{
-  "path": ".bla"
-}]');
-
--- test 7: ERROR 1644 (42000): Property $.optional of rule 1 at path ".bla" must be of the BOOLEAN type. Found: INTEGER.
-call p_validate_json_schema('[]', '[{
-  "path": ".bla",
-  "optional": 1
-}]');
-
--- test 8: Success
-call p_validate_json_schema('[]', '[{
-  "path": ".bla",
-  "optional": true
-}]');
-
--- test 9: ERROR 1644 (42000): Non-optional item at path .bla not found.
-call p_validate_json_schema('[]', '[{
-  "path": ".bla",
-  "optional": false
-}]');
-
--- test 10: Success
-call p_validate_json_schema('{
-  "bla": 1
-}', '[{
-  "path": ".bla"
-}]');
-
--- test 11: Success
-call p_validate_json_schema('{
-  "bla": 1
-}', '[{
-  "path": ".bla",
-  "type": "INTEGER"
-}]');
-
--- test 12: Success
-call p_validate_json_schema('{
-  "bla": 1
-}', '[{
-  "path": ".bla",
-  "type": ["INTEGER", "DECIMAL"]
-}]');
-
--- test 13: ERROR 1644 (42000): Item at path .bla should have one of the types ["INTEGER", "DECIMAL"]. Found: DOUBLE.
-call p_validate_json_schema('{
-  "bla": 1.1
-}', '[{
-  "path": ".bla",
-  "type": ["INTEGER", "DECIMAL"]
-}]');
-
--- test 14: success
-call p_validate_json_schema('{
-  "bla": 1.1
-}', '[{
-  "path": ".bla",
-  "type": ["INTEGER", "DOUBLE"]
-}]');
-
--- test 15: ERROR 1644 (42000): Item at path .bla has an invalid type. Found: DOUBLE.
-call p_validate_json_schema('{
-  "bla": 1.1
-}', '[{
-  "path": ".bla",
-  "type": {"INTEGER": true, "DOUBLE": false}
-}]');
-
--- test 16: Success
-call p_validate_json_schema('{
-  "bla": 1.1
-}', '[{
-  "path": ".bla",
-  "type": {"INTEGER": false, "DOUBLE": true}
-}]');
-
--- test 17: ERROR 1644 (42000): Non-nullable item at path .bla is null.
-call p_validate_json_schema('{
-  "bla": null
-}', '[{
-  "path": ".bla",
-  "type": {"INTEGER": false, "DOUBLE": true}
-}]');
-
--- test 18: Success
-call p_validate_json_schema('{
-  "bla": null
-}', '[{
-  "path": ".bla",
-  "nullable": true,
-  "type": {"INTEGER": false, "DOUBLE": true}
-}]');
