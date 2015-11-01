@@ -28,12 +28,13 @@ BEGIN
   -- type constants
   DECLARE v_type_array      CHAR(5)  DEFAULT 'ARRAY';
   DECLARE v_type_boolean    CHAR(7)  DEFAULT 'BOOLEAN';
+  DECLARE v_type_integer    CHAR(7)  DEFAULT 'INTEGER';
   DECLARE v_type_null       CHAR(4)  DEFAULT 'NULL';
   DECLARE v_type_object     CHAR(6)  DEFAULT 'OBJECT';
   DECLARE v_type_string     CHAR(6)  DEFAULT 'STRING';
 
   DECLARE i, j, n INT UNSIGNED DEFAULT 0;
-  DECLARE v_optional, v_nullable BOOL;
+  DECLARE v_optional, v_nullable, v_has_minvalue BOOL;
   DECLARE v_rule, v_rules, v_subrule, v_path, v_subpath, v_item, v_opt, v_typetype, v_typetype_item, v_value_nullable, v_minvalue, v_maxvalue, v_minlength, v_maxlength JSON;
   DECLARE v_message_text, v_prop, v_type, v_expected_type, v_item_type, v_path_string TEXT;
 
@@ -237,9 +238,11 @@ BEGIN
     END IF; -- end of type validation
 
     -- check minvalue
-    SET v_prop = v_prop_minvalue;
-    IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop) THEN
-      SET v_minvalue= JSON_EXTRACT(v_rule, v_prop)
+    SET v_prop = v_prop_minvalue
+    ,   v_has_minvalue = JSON_CONTAINS_PATH(v_rule, 'one', v_prop)
+    ;
+    IF v_has_minvalue THEN
+      SET v_minvalue = JSON_EXTRACT(v_rule, v_prop)
       ,   v_type = JSON_TYPE(v_minvalue)
       ;
 
@@ -265,6 +268,12 @@ BEGIN
 
       IF v_type != v_item_type THEN
         SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be of type ', v_item_type, '. Found: ', v_type, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+
+      IF v_has_minvalue AND v_maxvalue < v_minvalue THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' is less than ', v_prop_minvalue, '.');
         SIGNAL cond_rule_error
           SET MESSAGE_TEXT = v_message_text;
       END IF;
@@ -359,7 +368,12 @@ BEGIN
       END IF;
 
     END IF;
+
     -- TODO: check list of values
+    -- IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop_values) THEN
+
+    -- END IF;
+
     -- TODO: check pattern of value
 
     -- see if the current rule specifies sub-rules

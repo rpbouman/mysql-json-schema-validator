@@ -16,8 +16,7 @@ begin
   DECLARE continue handler FOR SQLSTATE '42000'
     BEGIN
       SET v_passfail = FALSE;
-      GET DIAGNOSTICS v_cno = NUMBER;
-      GET DIAGNOSTICS CONDITION v_cno v_message_text = MESSAGE_TEXT;
+      GET CURRENT DIAGNOSTICS CONDITION 1 v_message_text = MESSAGE_TEXT;
       IF v_message_text != p_message THEN
         SET v_passfail = !p_passfail;
       END IF;
@@ -25,7 +24,7 @@ begin
 
   CALL p_validate_json_schema(p_json, p_rules);
   IF v_passfail != p_passfail THEN
-    SELECT 'Failed!';
+    SELECT 'Failed!', v_message_text, p_json, p_rules;
   ELSE
     SELECT 'Success!';
   END IF;
@@ -170,3 +169,62 @@ call p_validate_json_schema_test('{
 }]', FALSE,
   'ERROR 1644 (42000): Item at path .bla is larger than $.maxvalue.'
 );
+
+call p_validate_json_schema_test('{
+  "bla": 5
+}', '[{
+  "path": ".bla",
+  "minvalue": 2,
+  "maxvalue": 1
+}]', FALSE,
+  'ERROR 1644 (42000): Property $.maxvalue of rule 1 at path ".bla" is less than $.minvalue.'
+);
+
+call p_validate_json_schema_test('{
+  "bla": 2
+}', '[{
+  "path": ".bla",
+  "minvalue": 2,
+  "minvalue": 2
+}]', TRUE, ''
+);
+
+call p_validate_json_schema_test('{
+  "bla": "string of length 19"
+}', '[{
+  "path": ".bla",
+  "minlength": 20,
+  "maxlength": 21
+}]', FALSE,
+  'ERROR 1644 (42000): Length of item at path .bla is 19 which is less than the specied $.minlength of 20.'
+);
+
+call p_validate_json_schema_test('{
+  "bla": "string of length 19"
+}', '[{
+  "path": ".bla",
+  "minlength": 10,
+  "maxlength": 18
+}]', FALSE,
+  'ERROR 1644 (42000): Length of item at path .bla is 19 which is more than the specied $.maxlength of 18.'
+);
+
+call p_validate_json_schema_test('{
+  "bla": "string of length 19"
+}', '[{
+  "path": ".bla",
+  "minlength": 19,
+  "maxlength": 18
+}]', FALSE,
+  'ERROR 1644 (42000): Property $.maxlength of rule 1 at path ".bla" is 18 which is less than the value specified for $.minlength which is 19.'
+);
+
+call p_validate_json_schema_test('{
+  "bla": "string of length 19"
+}', '[{
+  "path": ".bla",
+  "minlength": 19,
+  "maxlength": 21
+}]', TRUE, ''
+);
+
