@@ -228,3 +228,28 @@ call p_validate_json_schema_test('{
 }]', TRUE, ''
 );
 
+call p_validate_json_schema_test('{
+  "bla": "boe"
+}', '[{
+  "path": ".bla",
+  "values": ["boe", "bla"]
+}]', TRUE, ''
+);
+
+call p_validate_json_schema_test('{
+  "bla": "bla"
+}', '[{
+  "path": ".bla",
+  "values": ["boe", "bla"]
+}]', TRUE, ''
+);
+
+call p_validate_json_schema_test('{
+  "bla": "bla"
+}', '[{
+  "path": ".bla",
+  "values": ["foo", "bar"]
+}]', FALSE,
+  'ERROR 1644 (42000): Item at path .bla must be one of the values ["foo", "bar"] specified in $.values.'
+);
+

@@ -24,6 +24,7 @@ BEGIN
   DECLARE v_prop_maxvalue   CHAR(10) DEFAULT '$.maxvalue';
   DECLARE v_prop_minlength  CHAR(11) DEFAULT '$.minlength';
   DECLARE v_prop_maxlength  CHAR(11) DEFAULT '$.maxlength';
+  DECLARE v_prop_values     CHAR(8)  DEFAULT '$.values';
 
   -- type constants
   DECLARE v_type_array      CHAR(5)  DEFAULT 'ARRAY';
@@ -35,7 +36,10 @@ BEGIN
 
   DECLARE i, j, n INT UNSIGNED DEFAULT 0;
   DECLARE v_optional, v_nullable, v_has_minvalue BOOL;
-  DECLARE v_rule, v_rules, v_subrule, v_path, v_subpath, v_item, v_opt, v_typetype, v_typetype_item, v_value_nullable, v_minvalue, v_maxvalue, v_minlength, v_maxlength JSON;
+  DECLARE v_rule, v_rules, v_subrule, v_path, v_subpath, v_item, v_opt,
+          v_typetype, v_typetype_item, v_value_nullable,
+          v_minvalue, v_maxvalue, v_minlength, v_maxlength, v_values JSON
+  ;
   DECLARE v_message_text, v_prop, v_type, v_expected_type, v_item_type, v_path_string TEXT;
 
   SET v_type = JSON_TYPE(p_rules)
@@ -118,7 +122,7 @@ BEGIN
       END IF;
     END IF; -- end of optional validation
 
-    -- establisch nullability
+    -- establish nullability
     SET v_item_type = JSON_TYPE(v_item)
     ,   v_prop = v_prop_nullable
     ;
@@ -369,10 +373,34 @@ BEGIN
 
     END IF;
 
-    -- TODO: check list of values
-    -- IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop_values) THEN
+    -- check list of values
+    SET v_prop = v_prop_values;
+    IF JSON_CONTAINS_PATH(v_rule, 'one', v_prop) THEN
+      SET v_values = JSON_EXTRACT(v_rule, v_prop)
+      ,   v_type = JSON_TYPE(v_values)
+      ,   v_expected_type = v_type_array
+      ;
+      IF v_type != v_expected_type THEN
+        SET v_message_text = CONCAT('Property ', v_prop, ' of rule ', i, ' at path ', v_path, ' must be of the ', v_expected_type, ' type. Found: ', v_type, '.');
+        SIGNAL cond_rule_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
 
-    -- END IF;
+      SET n = JSON_LENGTH(v_values)
+      ,   j = 0
+      ;
+      _values: WHILE j < n DO
+        IF JSON_EXTRACT(v_values, CONCAT('$[', j, ']')) = v_item THEN
+          LEAVE _values;
+        END IF;
+        SET j = j + 1;
+      END WHILE _values;
+      IF j = n THEN
+        SET v_message_text = CONCAT('Item at path ', v_path_string, ' must be one of the values ', JSON_UNQUOTE(v_values),' specified in ', v_prop, '.');
+        SIGNAL cond_validation_error
+          SET MESSAGE_TEXT = v_message_text;
+      END IF;
+    END IF;
 
     -- TODO: check pattern of value
 
